@@ -1,29 +1,66 @@
 package mr
 
-import "log"
+import (
+	"log"
+	"sync"
+)
 import "net"
 import "os"
 import "net/rpc"
 import "net/http"
 
+type TaskStatus int
 
-type Coordinator struct {
-	// Your definitions here.
+const (
+	idle TaskStatus = iota
+	inProgress
+	completed
+)
 
+type MapTask struct {
+	Id        int
+	Filename  string
+	ReduceNum int
+
+	status TaskStatus
+}
+type ReduceTask struct {
+	Id int
 }
 
-// Your code here -- RPC handlers for the worker to call.
+type Coordinator struct {
+	files          []string
+	mapTaskList    []MapTask
+	reduceTaskList []ReduceTask
+	m              sync.Mutex
+}
 
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) error {
+	c.m.Lock()
+	defer c.m.Unlock()
+	for _, f := range c.mapTaskList {
+		if f.status == idle {
+			f.status = inProgress
+			reply.Status = HasTask
+			reply.Task = f
+			return nil
+		}
+	}
+	// no map task found
+	// todo
+	// 1. waiting map tasks finish
+	// 2. begin to assign reduce tasks
+	reply.Status = NoMoreTask
 	return nil
 }
 
+func (c *Coordinator) FinishTask(args *FinishTaskArgs, reply *FinishTaskReply) error {
+	c.m.Lock()
+	defer c.m.Unlock()
+	c.mapTaskList[args.Id].status = completed
+
+	return nil
+}
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +87,6 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -60,10 +96,14 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-
-	// Your code here.
-
+	log.Println("coordinator init with files: ", files)
+	c := Coordinator{
+		files: files,
+	}
+	for i, f := range c.files {
+		c.mapTaskList = append(c.mapTaskList, MapTask{Id: i, Filename: f, ReduceNum: nReduce})
+	}
+	// todo init reduce tasks
 
 	c.server()
 	return &c
