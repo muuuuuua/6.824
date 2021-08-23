@@ -9,11 +9,39 @@ package mr
 import "os"
 import "strconv"
 
+type TaskStatus int
+
+const (
+	idle TaskStatus = iota
+	inProgress
+	completed
+)
+
+type TaskType int
+
+const (
+	MAP TaskType = iota
+	REDUCE
+)
+
+type MapTask struct {
+	Id        int
+	Filename  string
+	ReduceNum int
+
+	status TaskStatus
+}
+type ReduceTask struct {
+	Id int
+
+	status TaskStatus
+}
 
 type ReplyStatus int
 
 const (
 	HasTask ReplyStatus = iota
+	Waiting
 	NoMoreTask
 )
 
@@ -21,16 +49,18 @@ type AskForTaskArgs struct {
 }
 
 type AskForTaskReply struct {
-	Status ReplyStatus
-	Task   MapTask
+	Status     ReplyStatus
+	TaskType   TaskType
+	MapTask    MapTask
+	ReduceTask ReduceTask
 }
 
 type FinishTaskArgs struct {
-	Id int
+	Id       int
+	TaskType TaskType
 }
 
 type FinishTaskReply struct {
-
 }
 
 // Cook up a unique-ish UNIX-domain socket name

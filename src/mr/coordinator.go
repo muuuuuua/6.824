@@ -9,25 +9,6 @@ import "os"
 import "net/rpc"
 import "net/http"
 
-type TaskStatus int
-
-const (
-	idle TaskStatus = iota
-	inProgress
-	completed
-)
-
-type MapTask struct {
-	Id        int
-	Filename  string
-	ReduceNum int
-
-	status TaskStatus
-}
-type ReduceTask struct {
-	Id int
-}
-
 type Coordinator struct {
 	files          []string
 	mapTaskList    []MapTask
@@ -42,14 +23,30 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 		if f.status == idle {
 			f.status = inProgress
 			reply.Status = HasTask
-			reply.Task = f
+			reply.TaskType = MAP
+			reply.MapTask = f
 			return nil
 		}
 	}
 	// no map task found
-	// todo
-	// 1. waiting map tasks finish
-	// 2. begin to assign reduce tasks
+	// todo do not traverse list
+	for _, t := range c.mapTaskList {
+		if t.status != completed {
+			// at least one map task not finished, worker need to wait
+			reply.Status = Waiting
+			return nil
+		}
+	}
+
+	for _, f := range c.reduceTaskList {
+		if f.status == idle {
+			f.status = inProgress
+			reply.Status = HasTask
+			reply.TaskType = REDUCE
+			reply.ReduceTask = f
+			return nil
+		}
+	}
 	reply.Status = NoMoreTask
 	return nil
 }
@@ -57,8 +54,11 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 func (c *Coordinator) FinishTask(args *FinishTaskArgs, reply *FinishTaskReply) error {
 	c.m.Lock()
 	defer c.m.Unlock()
-	c.mapTaskList[args.Id].status = completed
-
+	if args.TaskType == MAP {
+		c.mapTaskList[args.Id].status = completed
+	} else {
+		c.reduceTaskList[args.Id].status = completed
+	}
 	return nil
 }
 
@@ -78,19 +78,24 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-//
+// Done
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
+	// todo do not traverse list
+	c.m.Lock()
+	defer c.m.Unlock()
+	for _, f := range c.reduceTaskList {
+		if f.status != completed {
+			return false
+		}
+	}
 
-	// Your code here.
-
-	return ret
+	return true
 }
 
-//
+// MakeCoordinator
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
@@ -101,9 +106,12 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		files: files,
 	}
 	for i, f := range c.files {
-		c.mapTaskList = append(c.mapTaskList, MapTask{Id: i, Filename: f, ReduceNum: nReduce})
+		c.mapTaskList = append(c.mapTaskList, MapTask{Id: i, Filename: f, ReduceNum: nReduce, status: idle})
 	}
-	// todo init reduce tasks
+
+	for i := 0; i < nReduce; i++ {
+		c.reduceTaskList = append(c.reduceTaskList, ReduceTask{Id: i, status: idle})
+	}
 
 	c.server()
 	return &c
