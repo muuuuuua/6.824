@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"errors"
 	"log"
 	"sync"
 )
@@ -11,8 +12,9 @@ import "net/http"
 
 type Coordinator struct {
 	files          []string
-	mapTaskList    []MapTask
-	reduceTaskList []ReduceTask
+	mapTaskList    []*MapTask
+	reduceTaskList []*ReduceTask
+	reduceNum      int
 	m              sync.Mutex
 }
 
@@ -24,7 +26,7 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 			f.status = inProgress
 			reply.Status = HasTask
 			reply.TaskType = MAP
-			reply.MapTask = f
+			reply.MapTask = *f
 			return nil
 		}
 	}
@@ -43,7 +45,7 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 			f.status = inProgress
 			reply.Status = HasTask
 			reply.TaskType = REDUCE
-			reply.ReduceTask = f
+			reply.ReduceTask = *f
 			return nil
 		}
 	}
@@ -51,14 +53,23 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 	return nil
 }
 
-func (c *Coordinator) FinishTask(args *FinishTaskArgs, reply *FinishTaskReply) error {
+func (c *Coordinator) FinishMapTask(args *FinishMapTaskArgs, reply *FinishMapTaskReply) error {
 	c.m.Lock()
 	defer c.m.Unlock()
-	if args.TaskType == MAP {
-		c.mapTaskList[args.Id].status = completed
-	} else {
-		c.reduceTaskList[args.Id].status = completed
+	if len(args.ReduceFileList) != c.reduceNum {
+		return errors.New("wrong reduce file num")
 	}
+	c.mapTaskList[args.Id].status = completed
+	for i, f := range args.ReduceFileList {
+		c.reduceTaskList[i].InputFileList = append(c.reduceTaskList[i].InputFileList, f)
+	}
+	return nil
+}
+
+func (c *Coordinator) FinishReduceTask(args *FinishReduceTaskArgs, reply *FinishReduceTaskReply) error {
+	c.m.Lock()
+	defer c.m.Unlock()
+	c.reduceTaskList[args.Id].status = completed
 	return nil
 }
 
@@ -101,16 +112,17 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	log.Println("coordinator init with files: ", files)
+	log.Printf("coordinator init with files: %v", files)
 	c := Coordinator{
 		files: files,
+		reduceNum: nReduce,
 	}
 	for i, f := range c.files {
-		c.mapTaskList = append(c.mapTaskList, MapTask{Id: i, Filename: f, ReduceNum: nReduce, status: idle})
+		c.mapTaskList = append(c.mapTaskList, &MapTask{Id: i, Filename: f, ReduceNum: nReduce, status: idle})
 	}
 
 	for i := 0; i < nReduce; i++ {
-		c.reduceTaskList = append(c.reduceTaskList, ReduceTask{Id: i, status: idle})
+		c.reduceTaskList = append(c.reduceTaskList, &ReduceTask{Id: i, status: idle})
 	}
 
 	c.server()

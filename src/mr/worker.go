@@ -1,9 +1,11 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sort"
 	"time"
 )
 import "log"
@@ -17,6 +19,14 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -34,11 +44,13 @@ func doMap(task *MapTask, mapf func(string, string) []KeyValue) {
 	filename := task.Filename
 	log.Printf("begin to do map task[%d] with %s", taskId, filename)
 
-	intermediateFile := []*os.File{}
+	var intermediateFile []*os.File
+	var intermediateFilename []string
 	for i := 0; i < reduceNum; i++ {
-		filename := fmt.Sprintf("mr-%d-%d", taskId, i)
-		a, _ := os.Create(filename)
+		f := fmt.Sprintf("mr-%d-%d", taskId, i)
+		a, _ := os.Create(f)
 		intermediateFile = append(intermediateFile, a)
+		intermediateFilename = append(intermediateFilename, f)
 	}
 
 	file, err := os.Open(filename)
@@ -51,23 +63,71 @@ func doMap(task *MapTask, mapf func(string, string) []KeyValue) {
 	}
 	_ = file.Close()
 	kva := mapf(filename, string(content))
+
+	var jsonFile []*json.Encoder
+	for _, f := range intermediateFile {
+		jsonFile = append(jsonFile, json.NewEncoder(f))
+	}
 	for _, kv := range kva {
 		index := ihash(kv.Key) % reduceNum
-		_, _ = fmt.Fprintf(intermediateFile[index], "%v %v\n", kv.Key, kv.Value)
+		_ = jsonFile[index].Encode(&kv)
 	}
 
 	for _, f := range intermediateFile {
 		_ = f.Close()
 	}
 
-	FinishTask(taskId, MAP)
+	FinishMapTask(taskId, intermediateFilename)
 }
 
 func doReduce(task *ReduceTask, reducef func(string, []string) string) {
 	taskId := task.Id
-	log.Printf("begin to do reduce task[%d]", taskId)
-	time.Sleep(1 * time.Second)
-	FinishTask(taskId, REDUCE)
+	fileList := task.InputFileList
+	log.Printf("begin to do reduce task[%d] with %v", taskId, fileList)
+
+	var intermediate []KeyValue
+	for _, filename := range fileList {
+		f, err := os.Open(filename)
+		if err != nil {
+			log.Printf("open file %s failed", filename)
+			continue
+		}
+		dec := json.NewDecoder(f)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+		_ = f.Close()
+	}
+
+	sort.Sort(ByKey(intermediate))
+
+	outputName := fmt.Sprintf("mr-out-%d", taskId)
+	outputFile, _ := os.Create(outputName)
+
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		var values []string
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		_, _ = fmt.Fprintf(outputFile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	_ =outputFile.Close()
+	FinishReduceTask(taskId)
 }
 
 // Worker
@@ -102,15 +162,25 @@ func AskForTask(reply *AskForTaskReply) {
 	call("Coordinator.AskForTask", &args, &reply)
 }
 
-func FinishTask(id int, taskType TaskType) {
-	log.Printf("finish task %d", id)
-	args := FinishTaskArgs{
-		Id:       id,
-		TaskType: taskType,
+func FinishMapTask(id int, reduceFileList []string) {
+	log.Printf("finish map task %d", id)
+	args := FinishMapTaskArgs{
+		Id:             id,
+		ReduceFileList: reduceFileList,
 	}
-	reply := FinishTaskReply{}
+	reply := FinishMapTaskReply{}
 
-	call("Coordinator.FinishTask", &args, &reply)
+	call("Coordinator.FinishMapTask", &args, &reply)
+}
+
+func FinishReduceTask(id int) {
+	log.Printf("finish reduce task %d", id)
+	args := FinishReduceTaskArgs{
+		Id: id,
+	}
+	reply := FinishReduceTaskReply{}
+
+	call("Coordinator.FinishReduceTask", &args, &reply)
 }
 
 //

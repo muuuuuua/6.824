@@ -32,7 +32,8 @@ type MapTask struct {
 	status TaskStatus
 }
 type ReduceTask struct {
-	Id int
+	Id            int
+	InputFileList []string
 
 	status TaskStatus
 }
@@ -55,12 +56,19 @@ type AskForTaskReply struct {
 	ReduceTask ReduceTask
 }
 
-type FinishTaskArgs struct {
-	Id       int
-	TaskType TaskType
+type FinishMapTaskArgs struct {
+	Id             int
+	ReduceFileList []string
 }
 
-type FinishTaskReply struct {
+type FinishMapTaskReply struct {
+}
+
+type FinishReduceTaskArgs struct {
+	Id int
+}
+
+type FinishReduceTaskReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name
