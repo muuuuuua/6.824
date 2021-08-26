@@ -6,7 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"os"
+	"time"
+)
 import "strconv"
 
 type TaskStatus int
@@ -29,13 +32,36 @@ type MapTask struct {
 	Filename  string
 	ReduceNum int
 
-	status TaskStatus
+	startTime time.Time
+	status    TaskStatus
 }
+
 type ReduceTask struct {
 	Id            int
 	InputFileList []string
 
-	status TaskStatus
+	startTime time.Time
+	status    TaskStatus
+}
+
+func (t *MapTask) Idle() bool {
+	if t.status == idle {
+		return true
+	}
+	if t.status == inProgress && time.Now().Sub(t.startTime) >= 10*time.Second {
+		return true
+	}
+	return false
+}
+
+func (t *ReduceTask) Idle() bool {
+	if t.status == idle {
+		return true
+	}
+	if t.status == inProgress && time.Now().Sub(t.startTime) >= 10*time.Second {
+		return true
+	}
+	return false
 }
 
 type ReplyStatus int

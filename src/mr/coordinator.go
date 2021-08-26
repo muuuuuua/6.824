@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
 )
 import "net"
 import "os"
@@ -22,15 +23,16 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 	c.m.Lock()
 	defer c.m.Unlock()
 	for _, f := range c.mapTaskList {
-		if f.status == idle {
+		if f.Idle() {
 			f.status = inProgress
+			f.startTime = time.Now()
 			reply.Status = HasTask
 			reply.TaskType = MAP
 			reply.MapTask = *f
 			return nil
 		}
 	}
-	// no map task found
+	// waiting for map tasks all done
 	// todo do not traverse list
 	for _, t := range c.mapTaskList {
 		if t.status != completed {
@@ -41,11 +43,19 @@ func (c *Coordinator) AskForTask(args *AskForTaskArgs, reply *AskForTaskReply) e
 	}
 
 	for _, f := range c.reduceTaskList {
-		if f.status == idle {
+		if f.Idle() {
 			f.status = inProgress
+			f.startTime = time.Now()
 			reply.Status = HasTask
 			reply.TaskType = REDUCE
 			reply.ReduceTask = *f
+			return nil
+		}
+	}
+	// waiting for reduce tasks all done
+	for _, t := range c.reduceTaskList {
+		if t.status != completed {
+			reply.Status = Waiting
 			return nil
 		}
 	}
